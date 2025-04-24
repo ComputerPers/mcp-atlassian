@@ -1,0 +1,87 @@
+networks:
+  rnd-network:
+    # driver: bridge # Драйвер и имя можно не указывать, если сеть уже создана
+    # name: rnd-network
+    external: true # Указываем, что сеть создана вне этого compose файла
+
+volumes:
+  jira_test_data:
+  postgres_test_data:
+
+services:
+  postgres-test:
+    image: postgres:15-alpine # Используем Alpine для меньшего размера
+    container_name: postgres-test-atlassian
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jiradb}
+      POSTGRES_USER: ${POSTGRES_USER:-jirauser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jirapassword}
+      # Попытка установить правильную коллацию для Jira
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --lc-collate=C --lc-ctype=C'
+      PGDATA: /var/lib/postgresql/data/pgdata # Явное указание PGDATA
+    networks:
+      - rnd-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jirauser} -d ${POSTGRES_DB:-jiradb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  jira-test:
+    image: atlassian/jira-software:latest # Используем официальный образ
+    container_name: jira-test-atlassian
+    depends_on:
+      postgres-test:
+        condition: service_healthy # Ждем, пока база данных будет готова
+    volumes:
+      - jira_test_data:/var/atlassian/application-data/jira
+      # --- Монтируем файл лицензии из корня проекта ---
+      # Убедись, что файл ./jira-license.key существует и содержит твой ключ
+      - ./jira-license.key:/tmp/jira-license.key:ro # Монтируем только для чтения
+      # --- Монтируем скрипт-обертку entrypoint ---
+      - ./entrypoint-wrapper.sh:/opt/atlassian/jira/entrypoint-wrapper.sh:ro
+    networks:
+      - rnd-network
+    ports:
+      - "8081:8080" # Мапим на 8081 хоста для избежания конфликтов и для дебага
+    environment:
+      # --- Убираем попытки передать лицензию через env ---
+      # ATL_LICENSE_KEY: ${JIRA_LICENSE_KEY:-}
+      # SETUP_LICENSE: '${JIRA_LICENSE_KEY}'
+      # --- Оставляем остальные переменные окружения ---
+      # Настройки JVM
+      JVM_MINIMUM_MEMORY: 512m
+      JVM_MAXIMUM_MEMORY: 1024m
+      # Настройки подключения к БД
+      ATL_DB_TYPE: postgresql
+      ATL_DB_HOST: postgres-test
+      ATL_DB_PORT: 5432
+      ATL_DB_NAME: ${POSTGRES_DB:-jiradb}
+      ATL_DB_USER: ${POSTGRES_USER:-jirauser}
+      ATL_DB_PASSWORD: ${POSTGRES_PASSWORD:-jirapassword}
+      # Информация о прокси
+      ATL_PROXY_NAME: localhost
+      ATL_PROXY_PORT: 8080
+      ATL_TOMCAT_SCHEME: http
+      # Отключаем мастер настройки (может помочь, если лицензия подхватится)
+      ATL_SETUP_FINALISED: 'true'
+      SETUP_DATABASE: 'true'
+      # Установка имени пользователя/пароля администратора
+      ATL_ADMIN_USERNAME: ${JIRA_ADMIN_USERNAME:-admin}
+      ATL_ADMIN_PASSWORD: ${JIRA_ADMIN_PASSWORD:-admin}
+
+    # --- Устанавливаем кастомный entrypoint ---
+    entrypoint: ["/opt/atlassian/jira/entrypoint-wrapper.sh"]
+    # CMD оригинального образа Jira обычно запускает start-jira.sh -fg,
+    # наш wrapper передаст это оригинальному /entrypoint.sh
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10 # Даем Jira больше времени на запуск
+      start_period: 120s # Дополнительное время на первый запуск
+    restart: unless-stopped 

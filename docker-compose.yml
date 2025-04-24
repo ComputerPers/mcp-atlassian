@@ -1,0 +1,18 @@
+services:
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    container_name: mcp-atlassian
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    networks:
+      - rnd-network
+    ports:
+      - "9000:9000"
+    entrypoint: ["mcp-atlassian", "--transport", "sse", "--port", "9000"]
+
+networks:
+  rnd-network:
+    external: true

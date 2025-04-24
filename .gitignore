@@ -74,3 +74,11 @@ CLAUDE.md
 
 # cursor
 .cursor*
+.cline*
+
+# start.sh
+# docker-compose.yml
+# backend_version
+# tests.sh
+# docker-compose.test.yml
+# env.example
